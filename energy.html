@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+    <title>Martin Green - Domestic Energy Consumption</title>
+<style>
+
+body {
+    font: 10px sans-serif;
+}
+
+.header {
+    margin: 50px 0px;
+    font: 17px sans-serif;
+    position: absolute;
+    left: 1000px;
+}
+
+.svg {
+    float: left;
+    width: 1000px;
+    margin-bottom: 40px;
+    cursor: default;
+}
+
+.slice, 
+.axis {
+    pointer-events: none;
+}
+
+.axis path,
+.axis line {
+    fill: none;
+    stroke: #000;
+    shape-rendering: crispEdges;
+}
+
+.x.axis path {
+    display: none;
+}
+
+.label {
+    font-size: large;
+    text-anchor: end;
+}
+
+text {
+    text-shadow: -1px -1px 0 #fff, 
+                  1px -1px 0 #fff, 
+                 -1px  1px 0 #fff, 
+                  1px  1px 0 #fff;
+}
+
+.tooltip {
+    position: absolute;
+    text-align: center;
+    white-space: pre-wrap;
+    padding: 8px;
+    font: 10px sans-serif;
+    background: #eee;
+    box-shadow: 4px 4px #888;
+}
+
+.tooltip::first-line {
+    font-weight: bold;
+    font-size: 1.4em;
+    font-style: italic;
+    line-height: 0.8em;
+}
+
+.tooltip table {
+    text-align: right;
+}
+
+line {
+    fill: none;
+    stroke: #000;
+    stroke-width: 1px;
+}
+
+</style>
+</head>
+<body>
+<div class="content">
+    <div class="svg"></div>
+    <div class="header">
+    <p><strong>Total United States Energy Consumption by Fuel</strong></p>
+    <p>Click anywhere on the graph to toggle detailed renewable energy information.</p>
+    <p>Data from the U.S. Energy Information Administration's <a href="https://www.eia.gov/totalenergy/data/browser/index.php">Monthly Energy Review</a> and the <a href="https://www.eia.gov/outlooks/aeo/">Annual Energy Outlook 2017</a>.</p>
+    <p>All units are in Quads (Quadrillion BTUs).</p></div>
+</div>
+<script src='http://d3js.org/d3.v3.js'></script>
+<script>
+
+var fuels = ["Petroleum", "Natural Gas", "Coal", "Nuclear", "Solar", "Wind", "Hydro", "Ethanol", "Biomass", "Geothermal"];
+
+var margin = 50;
+var graphWidth = 1000 - 2*margin;
+var graphHeight = 300 - 2*margin;
+var svgHeightBase = (fuels.length-5) * (graphHeight + margin) + 20;
+var svgHeightExtend = fuels.length * (graphHeight + margin) + 20;
+
+var x = d3.time.scale()
+        .range([0, graphWidth]);
+
+var y = d3.scale.linear()
+        .range([graphHeight, 0]);
+
+var xAxis = d3.svg.axis()
+        .scale(x)
+        .orient("bottom");
+
+var yAxis = d3.svg.axis()
+        .scale(y)
+        .orient("left")
+        .tickFormat(Math.abs);
+
+var parseDate = d3.time.format("%Y").parse;
+var f = d3.format('.1f');
+var renewableShowing = true;
+
+var graphs = [];        // Each plot indexed fuel name
+var cumulative = [];    // Calculated sum of renewable energy by year
+
+// Store area colors in array for consistency
+var categoryColor = d3.scale.category20b();
+var color = []
+for (var i = 0; i < 20; i++) {
+    color[i] = categoryColor(i);
+}
+
+d3.csv("EnergyData.csv", function(error, data) {
+    if (error) throw error;
+
+    data.forEach(function(d) {
+        d.date = parseDate(d.date);
+        for (var i = 0; i < fuels.length; i++) {
+            d[fuels[i]] = +d[fuels[i]];
+        }
+    });
+
+    x.domain(d3.extent(data, function(d) { return d.date; }));
+    y.domain([-40, 40]);    // Manually set for uniform scale across graphs
+
+    var base_svg = d3.select(".svg").append("svg")
+        .attr("width", graphWidth + 2*margin)
+        .attr("height", svgHeightBase);
+
+    var svg = base_svg.append("g")
+            .datum(data)
+            .attr("transform", "translate(" + margin + "," + margin + ")")
+            .style("pointer-events", "all")
+            .on("mousemove", mousemove)
+            .on("mouseout", mouseout)
+            .on("click", toggleRenewable);
+
+    // -------------------------   Renewable Energy Graph Start   -------------------------
+    
+    // Sum energy use for each consecutive energy source to build the renewable graph
+    cumulative[3] = [];
+    for (var i = 0; i < data.length; i++) { cumulative[3][i] = 0; }
+    for (var j = 4; j < fuels.length; j++) {
+        cumulative[j] = [];
+        for (var i = 0; i < data.length; i++) {
+            cumulative[j][i] = cumulative[j-1][i] + data[i][fuels[j]];
+        }
+    }
+    
+    // Central array to reference each plot (Renewables being the 11th)
+    graphs[10] = svg.append("g")
+        .attr("class", "Renewable")
+        .attr("transform", "translate(0," + ((graphHeight + margin)*4) + ")");
+        
+    var plot = graphs[10].append("g");
+
+    for (var j = 4; j < fuels.length; j++) {
+        var area = d3.svg.area()
+            .interpolate("basis")
+            .x(function(d) { return x(d.date); })
+            .y1(function(d, i) { return y(cumulative[j][i]); })
+            .y0(function(d, i) { return y((cumulative[j-1][i])); });
+
+        var areaNeg = d3.svg.area()
+            .interpolate("basis")
+            .x(function(d) { return x(d.date); })
+            .y1(function(d, i) { return y(-1*cumulative[j][i]); })
+            .y0(function(d, i) { return y((-1*cumulative[j-1][i])); });
+
+        plot.append("path")
+            .attr("class", "area above")
+            .style("fill", color[j])
+            .attr("d", area);
+
+        plot.append("path")
+            .attr("class", "area below")
+            .style("fill", color[j])
+            .attr("d", areaNeg);
+    }
+
+    plot.append("line")
+        .attr("class", "slice")
+        .attr("x1", 0)
+        .attr("y1", 0)
+        .attr("x2", 0)
+        .attr("y2", graphHeight)
+        .style("display", "none");
+
+    plot.append("line")
+        .attr("x1", (x(parseDate("2016"))+2))
+        .attr("y1", 0)
+        .attr("x2", (x(parseDate("2016"))+2))
+        .attr("y2", graphHeight);
+
+    plot.append("text")
+        .attr("transform", "translate(" + x(parseDate("2016")) + ",0)")
+        .attr("dx", "0.75em")
+        .attr("dy", "1em")
+        .attr("word-spacing", 30)
+        .style("text-anchor", "middle")
+        .text("History Projected");
+
+    // x axis
+    graphs[10].append("g")
+        .attr("class", "x axis Renewable")
+        .attr("transform", "translate(-5," + graphHeight + ")")
+        .call(xAxis);
+
+    // y axis
+    var axis = graphs[10].append("g")
+        .attr("class", "y axis Renewable")
+        .call(yAxis);
+
+    axis.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("dy", "1em")
+        .attr("class", "label")
+        .text("Renewable Energy");
+
+    axis.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("dy", "3.5em")
+        .style("text-anchor", "end")
+        .text("Quadrillion BTUs");
+
+    // -------------------------   Renewable Energy Graph End   -------------------------
+
+
+    // Individual plots
+    for (var i = 0; i < fuels.length; i++) {
+
+        graphs[i] = svg.append("g")
+            .attr("class", fuels[i])
+            .attr("transform", "translate(0," + ((graphHeight + margin)*i) + ")");
+
+        var plot = graphs[i].append("g");
+
+        // Plot
+        var area = d3.svg.area()
+            .interpolate("basis")
+            .x(function(d) { return x(d.date); })
+            .y1(function(d) { return y(d[fuels[i]]); })
+            .y0(function(d) { return y(-1*d[fuels[i]]); });      
+
+        plot.append("path")
+            .attr("class", "area")
+            .style("fill", color[i])
+            .attr("d", area);
+
+        plot.append("line")
+            .attr("class", "slice")
+            .attr("x1", 0)
+            .attr("y1", 0)
+            .attr("x2", 0)
+            .attr("y2", graphHeight)
+            .style("display", "none");
+
+        plot.append("line")
+            .attr("x1", (x(parseDate("2016"))+2))
+            .attr("y1", 0)
+            .attr("x2", (x(parseDate("2016"))+2))
+            .attr("y2", graphHeight);
+
+        plot.append("text")
+            .attr("transform", "translate(" + x(parseDate("2016")) + ",0)")
+            .attr("dx", "0.75em")
+            .attr("dy", "1em")
+            .attr("word-spacing", 30)
+            .style("text-anchor", "middle")
+            .text("History Projected");
+
+        // x axis
+        graphs[i].append("g")
+            .attr("class", "x axis " + fuels[i])
+            .attr("transform", "translate(-5," + graphHeight + ")")
+            .call(xAxis);
+
+        // y axis
+        var axis = graphs[i].append("g")
+            .attr("class", "y axis " + fuels[i])
+            .call(yAxis);
+
+        axis.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("dy", "1em")
+            .attr("class", "label")
+            .text(fuels[i]);
+
+        axis.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("dy", "3.5em")
+            .style("text-anchor", "end")
+            .text("Quadrillion BTUs");
+    }
+
+    // Translates mouse movements up to parent svg
+    svg.append('rect')
+        .style('visibility', 'hidden')
+        .attr('x', 0)
+        .attr('y', 0)
+        .attr('width', graphWidth)
+        .attr('height', (graphHeight+margin)*fuels.length);
+
+    // Hide extra graphs
+    if (renewableShowing) {
+        for (var i = 4; i < fuels.length; i++) {
+            graphs[i].style('visibility', 'hidden');
+        }
+        base_svg.attr("height", svgHeightBase);
+    } else {
+        graphs[10].style('visibility', 'hidden');
+        base_svg.attr("height", svgHeightExtend);
+    }
+
+    // Setup tooltip
+    var div = d3.select(".content")
+        .append("div")
+            .datum(data)
+            .attr("class", "tooltip")
+            .style("display", "none")
+            .on("mousemove", mousemove)
+            .on("mouseout", mouseout)
+            .on("click", toggleRenewable);
+
+    function mousemove(d) {
+        updateTooltip(d);
+        div.style("display", "inline");
+    }
+
+    function mouseout(d) {
+        div.style("display", "none");
+        svg.selectAll(".slice").style("display", "none");
+    }
+
+    function toggleRenewable(d) {
+        if (renewableShowing) {
+            graphs[10].style('visibility', 'hidden');
+            for (var i = 4; i < fuels.length; i++) {
+                graphs[i].style('visibility', 'visible');
+            }
+            base_svg.attr("height", svgHeightExtend);
+
+        } else {
+            graphs[10].style('visibility', 'visible');
+            for (var i = 4; i < fuels.length; i++) {
+                graphs[i].style('visibility', 'hidden');
+            }
+            base_svg.attr("height", svgHeightBase);
+
+            var index = Math.floor((d3.event.pageY-40) / (graphHeight+margin));
+            if (index > 4) {
+                div.style("display", "none");
+            }
+        }
+
+        renewableShowing = !renewableShowing;
+        updateTooltip(d);
+    }
+
+    function updateTooltip(d) {
+        var date = x.invert(d3.event.pageX-59);
+        svg.selectAll(".slice")
+            .attr("x1", (x(date) + 1))
+            .attr("x2", (x(date) + 1))
+            .style("display", "inline");
+
+        if (date.getTime() < -652320000*1000) {  // May, 1949
+            date.setTime(-683856000*1000)        // May, 1948 (Easier to get 1949 tooltip)
+        }
+
+        var string = "";
+        string += (date.getFullYear()+1);
+        string += "<table>"
+
+        var limit = 4;
+        for (var i = 0; i < limit; i++) {
+            string += "<tr><td>" + fuels[i] + "</td><td>" + f(d[date.getFullYear()-1948][fuels[i]]) + "</td></tr>\n";
+        }
+
+        if (renewableShowing) {
+            string += "<tr><td>Renewables</td><td>" + f(cumulative[fuels.length-1][date.getFullYear()-1948]) + "</td></tr>\n";
+        } else {
+            for (var i = limit; i < fuels.length; i++) {
+                string += "<tr><td>" + fuels[i] + "</td><td>" + f(d[date.getFullYear()-1948][fuels[i]]) + "</td></tr>\n";
+            }
+        }
+
+        string += "</table>";
+        div[0][0].innerHTML = string;
+
+
+        var index = Math.floor((d3.event.pageY-40) / (graphHeight+margin));
+        var left = d3.event.pageX - 145 > 0 ? d3.event.pageX - 120 : d3.event.pageX + 20;
+        var offset = renewableShowing ? 102 : 61;
+
+        div.style("left", left + "px")
+            .style("top", (index * (graphHeight+margin) + offset) + "px");
+    }
+
+});
+
+</script>
